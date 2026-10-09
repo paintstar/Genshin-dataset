@@ -45,7 +45,7 @@ jobs:
           REFRESH_ALL: ${{ inputs.refresh_all }}
           SAMPLE_IDS: ${{ inputs.sample_ids }}
         run: |
-          VERSION=$(date -u +%Y-%m-%d.%H%M)
+          VERSION="$(date -u +%Y-%m-%d).$GITHUB_RUN_NUMBER"
           EXTRA_ARGS=()
           if [ "$REFRESH_ALL" = 'true' ]; then EXTRA_ARGS+=(--refresh-all); fi
           if [ -n "$SAMPLE_IDS" ]; then EXTRA_ARGS+=(--ids "$SAMPLE_IDS"); fi
@@ -57,9 +57,12 @@ jobs:
         env:
           VERSION: ${{ steps.collect.outputs.version }}
         run: |
+          if [ -f work/cache/published.json ]; then cp work/cache/published.json work/previous-published.json; fi
+          trap 'publish_result=$?; if [ "$publish_result" -ne 0 ]; then if [ -f work/previous-published.json ]; then cp work/previous-published.json work/cache/published.json; else rm -f work/cache/published.json; fi; fi' EXIT
           cp dist/latest.json work/cache/published.json
           tar -czf work/source-cache.tar.gz -C work/cache .
-          gh release create "$VERSION" dist/story.gllpack dist/latest.json work/source-cache.tar.gz --repo "$GITHUB_REPOSITORY" --title "剧情资源 $VERSION" --notes '中日双语剧情资源。应用导入 story.gllpack 后可离线使用。'
+          gh release create "$VERSION" --draft dist/story.gllpack dist/latest.json work/source-cache.tar.gz --repo "$GITHUB_REPOSITORY" --title "剧情资源 $VERSION" --notes '中日双语剧情资源。应用导入 story.gllpack 后可离线使用。'
+          gh release edit "$VERSION" --draft=false --repo "$GITHUB_REPOSITORY"
       - name: 保存断点
         if: always()
         uses: actions/cache/save@v6.1.0

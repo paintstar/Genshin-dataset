@@ -57,7 +57,7 @@ function detail(raw, questId) {
         if (!Object.hasOwn(block.items, initDialog)) throw new Error('对白入口不存在')
         const items = {}
         for (const [id, node] of Object.entries(block.items)) {
-          if (!node || typeof node !== 'object' || !Array.isArray(node.text)) throw new Error('对白节点结构无效')
+          if (!node || typeof node !== 'object' || !['SingleDialog', 'MultiDialog'].includes(node.type) || !Array.isArray(node.text)) throw new Error('对白节点结构无效')
           items[id] = { type: node.type, role: node.role, text: node.text.map(row => {
             if (!row || typeof row !== 'object') throw new Error('对白文本结构无效')
             const next = row.next
