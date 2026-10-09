@@ -2,7 +2,7 @@
 
 为[提瓦特 · 语旅](https://github.com/paintstar/Genshin-text-learning)维护中日双语剧情快照。资源更新独立于应用发布；客户端导入资源包后，可以离线搜索、阅读、查词和记录笔记。
 
-本仓库目前为私有。剧情来自 Project Amber，游戏文本及相关内容权利归原权利人所有。私有存储不等于取得公开再分发许可，公开仓库或另设公共下载源前，需要核对上游当前要求和内容使用范围。应用与资源包均不包含维护者的 GitHub 凭据。
+本仓库已公开，Release 资源可以匿名下载。剧情来自 Project Amber，游戏文本及相关内容权利归原权利人所有；仓库公开状态不改变内容的权利归属。应用与资源包均不包含维护者的 GitHub 凭据。
 
 ## 本地采集
 
@@ -26,6 +26,6 @@ node tools/story-data.mjs collect --cache-dir work/cache --output dist/story.gll
 
 上一份 Release 的采集缓存用于恢复长期状态，Actions 缓存用于恢复尚未发布的断点。有内容变化才发布新版本，旧 Release 保留。采集报告仅保存为 Actions 附件。
 
-每份 Release 包含 `story.gllpack`、`latest.json` 和维护端使用的 `source-cache.tar.gz`。`latest.json` 中的包地址指向固定版本；发布完成后 GitHub 的 latest 入口指向新版本。私有仓库附件不能被普通用户匿名下载，目前用于维护及生成随应用分发的离线包。将来有可匿名访问的 HTTPS 分发入口时，再将清单地址配置到应用。
+每份 Release 包含 `story.gllpack`、`latest.json` 和维护端使用的 `source-cache.tar.gz`。`latest.json` 中的包地址指向固定版本；发布完成后 GitHub 的 latest 入口指向新版本。应用的默认清单地址为 `https://github.com/paintstar/Genshin-dataset/releases/latest/download/latest.json`，可以匿名访问；维护缓存不随安装包提供。
 
 正式资源也可在应用源码中执行 `cargo run -p xtask -- story-pack inspect <文件路径>`，核对应用解析兼容性；携带资源的桌面构建会自动执行此检查。
