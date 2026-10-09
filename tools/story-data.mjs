@@ -15,6 +15,8 @@ for (let i = 3; i < process.argv.length; i++) {
   options.set(key.slice(2), process.argv[i + 1]?.startsWith('--') || !process.argv[i + 1] ? true : process.argv[++i])
 }
 const option = (name, fallback) => options.get(name) ?? fallback
+const outputPath = () => resolve(String(option('output', command === 'fixture' ? 'dist/fixtures/story.gllpack' : 'dist/story.gllpack')))
+const isReleased = entry => typeof entry?.chapterTitle === 'string' && entry.chapterTitle.trim() && !entry.chapterTitle.includes('$UNRELEASED')
 const now = () => Math.floor(Date.now() / 1000)
 const sleep = ms => new Promise(done => setTimeout(done, ms))
 const sha = text => createHash('sha256').update(text).digest('hex')
@@ -118,7 +120,7 @@ async function fetchJson(source, path, validator) {
   }
 }
 async function build(cache, jpIndex, chsIndex, ids, fixture = false) {
-  const output = resolve(String(option('output', 'dist/story.gllpack')))
+  const output = outputPath()
   const dataVersion = String(option('data-version', new Date().toISOString().replace(/[:.]/g, '-')))
   if (!/^[A-Za-z0-9._-]{1,128}$/.test(dataVersion)) throw new Error('资源版本仅支持字母、数字、点、下划线和短横线')
   const items = langIndex => ({ data: { items: Object.fromEntries(ids.map(id => [id, langIndex[id]])) } })
@@ -157,7 +159,7 @@ async function build(cache, jpIndex, chsIndex, ids, fixture = false) {
 }
 let collectionFailures = []
 async function main() {
-  const cache = resolve(String(option('cache-dir', 'work/cache')))
+  const cache = resolve(String(option('cache-dir', command === 'fixture' ? 'work/fixture-cache' : 'work/cache')))
   await mkdir(cache, { recursive: true })
   if (command === 'fixture') {
     const fixtures = resolve(String(option('fixtures', 'app/fixtures')))
@@ -174,13 +176,29 @@ async function main() {
     const source = String(option('source-url', 'https://gi.yatta.moe/api/v2')).replace(/\/$/, '')
     const parsed = new URL(source)
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('上游地址必须是无凭据的 HTTPS URL')
+    const previousJp = await json(join(cache, 'index-jp.json')).catch(() => ({}))
+    const previousChs = await json(join(cache, 'index-chs.json')).catch(() => ({}))
     console.log('开始同步任务目录')
     jp = index((await fetchJson(source, 'jp/quest')).raw)
     chs = index((await fetchJson(source, 'chs/quest')).raw)
+    const currentIds = new Set(Object.keys(jp).map(Number).filter(id => isReleased(jp[id]) && isReleased(chs[id])))
+    const previousCount = Object.keys(previousJp).filter(id => isReleased(previousJp[id]) && isReleased(previousChs[id])).length
+    const maxDrop = number('max-index-drop', 0.1)
+    if (maxDrop > 1) throw new Error('max-index-drop 参数需要在 0 到 1 之间')
+    if (previousCount && currentIds.size < previousCount * (1 - maxDrop)) throw new Error('任务目录数量异常减少，本轮停止，保留旧资源')
+    // 已收录的历史任务不会随上游目录移除而消失。
+    const archivedIds = new Set()
+    for (const id of Object.keys(previousJp).map(Number)) {
+      if (currentIds.has(id) || !isReleased(previousJp[id]) || !isReleased(previousChs[id])) continue
+      const old = await json(join(cache, `${id}.json`)).catch(() => null)
+      if (old?.sourceUrl !== source) continue
+      try { record(id, old.jp, old.chs) } catch { continue }
+      jp[id] = previousJp[id]; chs[id] = previousChs[id]; archivedIds.add(id)
+    }
     await atomic(join(cache, 'index-jp.json'), JSON.stringify(jp))
     await atomic(join(cache, 'index-chs.json'), JSON.stringify(chs))
     const selected = option('ids', '') ? new Set(String(option('ids')).split(',').map(Number)) : null
-    const ids = Object.keys(jp).map(Number).filter(id => chs[id] && ![jp[id], chs[id]].some(e => !e.chapterTitle || e.chapterTitle.includes('$UNRELEASED')) && (!selected || selected.has(id))).sort((a,b) => a-b)
+    const ids = Object.keys(jp).map(Number).filter(id => chs[id] && isReleased(jp[id]) && isReleased(chs[id]) && (!selected || selected.has(id))).sort((a,b) => a-b)
     if (selected && ids.length !== selected.size) throw new Error('指定任务不在已发布双语目录中')
     const refreshBefore = now() - number('refresh-days', 7) * 86400
     const usable = []
@@ -191,7 +209,8 @@ async function main() {
       let old = await json(path).catch(() => null)
       try { if (old) record(id, old.jp, old.chs) } catch { old = null }
       if (old?.sourceUrl !== source) old = null
-      if (old && old.collectedAt > refreshBefore && !options.has('refresh-all')) { usable.push(id); continue }
+      const indexChanged = JSON.stringify(previousJp[id]) !== JSON.stringify(jp[id]) || JSON.stringify(previousChs[id]) !== JSON.stringify(chs[id])
+      if (old && (archivedIds.has(id) || old.collectedAt > refreshBefore && !options.has('refresh-all') && !indexChanged)) { usable.push(id); continue }
       try {
         const a = await fetchJson(source, `jp/quest/${id}`, old?.jpValidator)
         const b = await fetchJson(source, `chs/quest/${id}`, old?.chsValidator)
@@ -212,7 +231,7 @@ async function main() {
       if ((pos + 1) % 25 === 0 || pos === ids.length - 1) console.log(`进度 ${pos + 1}/${ids.length}，失败 ${collectionFailures.length}`)
     }
     if (usable.length !== ids.length) {
-      const output = resolve(String(option('output', 'dist/story.gllpack')))
+      const output = outputPath()
       await atomic(join(dirname(output), 'run-report.json'), JSON.stringify({ changed: false, incomplete: true, questCount: usable.length, expected: ids.length, failures: collectionFailures }, null, 2))
       throw new Error('本轮资源尚未完整，断点已保存；重新执行可补齐失败任务')
     }
@@ -221,8 +240,12 @@ async function main() {
     jp = await json(join(cache, 'index-jp.json'))
     chs = await json(join(cache, 'index-chs.json'))
     const selected = option('ids', '') ? new Set(String(option('ids')).split(',').map(Number)) : null
-    const ids = Object.keys(jp).map(Number).filter(id => chs[id] && ![jp[id], chs[id]].some(e => !e.chapterTitle || e.chapterTitle.includes('$UNRELEASED')) && (!selected || selected.has(id))).sort((a,b) => a-b)
+    const ids = Object.keys(jp).map(Number).filter(id => chs[id] && isReleased(jp[id]) && isReleased(chs[id]) && (!selected || selected.has(id))).sort((a,b) => a-b)
     await build(cache, jp, chs, ids)
   }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1 })
+main().catch(async error => {
+  console.error(error.message)
+  await atomic(join(dirname(outputPath()), 'run-report.json'), JSON.stringify({ changed: false, incomplete: true, reason: error.message, failures: collectionFailures }, null, 2)).catch(() => {})
+  process.exitCode = 1
+})
