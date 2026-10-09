@@ -1,0 +1,75 @@
+name: 更新剧情资源
+on:
+  workflow_dispatch:
+    inputs:
+      refresh_all:
+        description: 重新检查全部任务正文
+        type: boolean
+        default: false
+      sample_ids:
+        description: 验证用任务编号（逗号分隔，填写后只验证、不发布）
+        type: string
+        default: ''
+  schedule:
+    - cron: '17 20 * * 5'
+permissions:
+  contents: write
+concurrency:
+  group: story-resources
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: 恢复采集断点
+        run: |
+          mkdir -p work/cache dist
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'source-cache.tar.gz' --dir work; then
+            tar -xzf work/source-cache.tar.gz -C work/cache
+          fi
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: work/cache
+          key: story-cache-${{ github.run_id }}
+          restore-keys: story-cache-
+      - name: 采集并生成资源包
+        id: collect
+        env:
+          REFRESH_ALL: ${{ inputs.refresh_all }}
+          SAMPLE_IDS: ${{ inputs.sample_ids }}
+        run: |
+          VERSION=$(date -u +%Y-%m-%d.%H%M)
+          EXTRA_ARGS=()
+          if [ "$REFRESH_ALL" = 'true' ]; then EXTRA_ARGS+=(--refresh-all); fi
+          if [ -n "$SAMPLE_IDS" ]; then EXTRA_ARGS+=(--ids "$SAMPLE_IDS"); fi
+          node tools/story-data.mjs collect --cache-dir work/cache --output dist/story.gllpack --refresh-days 30 --data-version "$VERSION" --download-base "https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION" "${EXTRA_ARGS[@]}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "changed=$(node -p 'JSON.parse(require("fs").readFileSync("dist/run-report.json")).changed')" >> "$GITHUB_OUTPUT"
+      - name: 发布新资源
+        if: steps.collect.outputs.changed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.sample_ids == '')
+        env:
+          VERSION: ${{ steps.collect.outputs.version }}
+        run: |
+          cp dist/latest.json work/cache/published.json
+          tar -czf work/source-cache.tar.gz -C work/cache .
+          gh release create "$VERSION" dist/story.gllpack dist/latest.json work/source-cache.tar.gz --repo "$GITHUB_REPOSITORY" --title "剧情资源 $VERSION" --notes '中日双语剧情资源。应用导入 story.gllpack 后可离线使用。'
+      - name: 保存断点
+        if: always()
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: work/cache
+          key: story-cache-${{ github.run_id }}
+      - name: 保存运行报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: maintenance-report
+          path: dist/run-report.json
+          retention-days: 30

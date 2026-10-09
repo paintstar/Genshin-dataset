@@ -1,0 +1,6 @@
+work/
+dist/
+*.log
+*.tmp
+.env
+.env.*
